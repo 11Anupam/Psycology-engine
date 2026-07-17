@@ -1037,13 +1037,18 @@ MARKETING IMPLICATIONS
         show_cols = ["review_text", "rating", "sentiment_label", "sentiment_score", "date"]
         show_cols = [c for c in show_cols if c in df_view.columns]
         st.dataframe(
-            df_view[show_cols].style.background_gradient(
-                subset=["sentiment_score"] if "sentiment_score" in show_cols else [],
-                cmap="RdYlGn", vmin=-1, vmax=1
-            ),
+            df_view[show_cols],
             use_container_width=True,
             height=500,
-        )
+        )    
+        #st.dataframe(
+           # df_view[show_cols].style.background_gradient(
+           #     subset=["sentiment_score"] if "sentiment_score" in show_cols else [],
+           #     cmap="RdYlGn", vmin=-1, vmax=1
+          #  ),
+          #  use_container_width=True,
+         #   height=500,
+        #)
         csv = df_view.to_csv(index=False).encode()
         st.download_button("⬇️ Download Processed Data (CSV)", data=csv, file_name="processed_reviews.csv", mime="text/csv")
 
