@@ -216,6 +216,57 @@ st.markdown("""
     margin: 0.15rem;
   }
 
+  /* Wow insight card */
+  .wow-card {
+    background: linear-gradient(135deg, #0a1628 0%, #0f1f35 100%);
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
+    padding: 1.4rem 1.8rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .wow-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #00b7ff, #3fb950, #d29922, #f85149);
+  }
+  .wow-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .wow-block {
+    background: #0d1220;
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    border: 1px solid #1e2d3d;
+  }
+  .wow-block-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.5rem;
+  }
+  .wow-block-text {
+    color: #c9d1d9;
+    font-size: 0.88rem;
+    line-height: 1.6;
+  }
+  .urgency-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    background: #1e2d3d;
+    margin-left: 0.5rem;
+  }
+
   /* Upload zone */
   [data-testid="stFileUploader"] {
     background: #0d1220;
@@ -384,6 +435,71 @@ def score_drivers_barriers(texts_raw, patterns_dict):
         )
         results[category] = {"mentions": count, "reviews": review_hits, "pct": round(review_hits / max(total, 1) * 100, 1)}
     return dict(sorted(results.items(), key=lambda x: x[1]["mentions"], reverse=True))
+
+def generate_wow_insight(df, drivers, barriers, keywords, pct_positive, pct_negative, avg_rating):
+    """Generate a data-driven top insight + recommendation card."""
+
+    # --- Top insight: best driver in positive reviews vs best barrier in negative reviews ---
+    pos_reviews = df[df["sentiment_label"] == "Positive"]["review_text"].tolist()
+    neg_reviews = df[df["sentiment_label"] == "Negative"]["review_text"].tolist()
+    n_pos = max(len(pos_reviews), 1)
+    n_neg = max(len(neg_reviews), 1)
+
+    # Score drivers against positive reviews only
+    pos_driver_pcts = {}
+    for cat, kws in PURCHASE_DRIVERS.items():
+        hits = sum(1 for t in pos_reviews if isinstance(t, str) and any(k.lower() in t.lower() for k in kws))
+        pos_driver_pcts[cat] = round(hits / n_pos * 100, 1)
+
+    # Score barriers against negative reviews only
+    neg_barrier_pcts = {}
+    for cat, kws in PURCHASE_BARRIERS.items():
+        hits = sum(1 for t in neg_reviews if isinstance(t, str) and any(k.lower() in t.lower() for k in kws))
+        neg_barrier_pcts[cat] = round(hits / n_neg * 100, 1)
+
+    top_pos_driver = max(pos_driver_pcts, key=pos_driver_pcts.get)
+    top_pos_pct    = pos_driver_pcts[top_pos_driver]
+    top_neg_barrier = max(neg_barrier_pcts, key=neg_barrier_pcts.get)
+    top_neg_pct    = neg_barrier_pcts[top_neg_barrier]
+
+    insight = (
+        f"<b style='color:#3fb950'>{top_pos_driver}</b> is mentioned in "
+        f"<b style='color:#3fb950'>{top_pos_pct:.0f}%</b> of positive reviews, "
+        f"while <b style='color:#f85149'>{top_neg_barrier}</b> appears in "
+        f"<b style='color:#f85149'>{top_neg_pct:.0f}%</b> of negative reviews."
+    )
+
+    # --- Recommendation: highest-impact action ---
+    # Find the barrier with highest negative review penetration
+    top_barrier_name = max(barriers, key=lambda k: barriers[k]["pct"]) if barriers else top_neg_barrier
+    top_barrier_pct  = barriers[top_barrier_name]["pct"] if barriers else top_neg_pct
+
+    # Find the driver with highest positive review penetration
+    top_driver_name = max(drivers, key=lambda k: drivers[k]["pct"]) if drivers else top_pos_driver
+    top_driver_pct  = drivers[top_driver_name]["pct"] if drivers else top_pos_pct
+
+    # Sentiment gap signal
+    if pct_negative > 30:
+        urgency = "🚨 High urgency"
+        urgency_color = "#f85149"
+    elif pct_negative > 15:
+        urgency = "⚠️ Medium urgency"
+        urgency_color = "#d29922"
+    else:
+        urgency = "✅ Low urgency"
+        urgency_color = "#3fb950"
+
+    recommendation = (
+        f"Customers love <b style='color:#3fb950'>{top_driver_name}</b> "
+        f"({top_driver_pct:.0f}% of reviews) but repeatedly flag "
+        f"<b style='color:#f85149'>{top_barrier_name}</b> "
+        f"({top_barrier_pct:.0f}% of reviews). "
+        f"Fixing <b style='color:#f85149'>{top_barrier_name}</b> has the highest potential to shift sentiment "
+        f"and improve the current <b style='color:#e6edf3'>{avg_rating:.1f}★</b> rating."
+    )
+
+    return insight, recommendation, urgency, urgency_color, top_driver_name, top_barrier_name
+
 
 def generate_sample_data(n=300):
     np.random.seed(42)
@@ -607,6 +723,30 @@ def main():
         <div class="metric-label">Brand Loyalty Signals</div>
         <div class="metric-value" style="color:#d29922">{loyalty_pct:.1f}%</div>
         <div class="metric-delta delta-neu">Value mentions: {value_pct:.1f}%</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Wow Insight Card ──────────────────────────────────────────────────────
+    insight, recommendation, urgency, urgency_color, top_drv, top_bar = generate_wow_insight(
+        df_view, analysis["drivers"], analysis["barriers"],
+        analysis["keywords"], pct_positive, pct_negative, avg_rating
+    )
+    st.markdown(f"""
+    <div class="wow-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem">
+        <span style="color:#00b7ff;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em">&#9889; AI Insight Engine</span>
+        <span class="urgency-badge" style="color:{urgency_color}">{urgency}</span>
+      </div>
+      <div class="wow-grid">
+        <div class="wow-block">
+          <div class="wow-block-label" style="color:#00b7ff">&#128269; Top Insight</div>
+          <div class="wow-block-text">{insight}</div>
+        </div>
+        <div class="wow-block">
+          <div class="wow-block-label" style="color:#3fb950">&#127919; #1 Recommendation</div>
+          <div class="wow-block-text">{recommendation}</div>
+        </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1037,18 +1177,13 @@ MARKETING IMPLICATIONS
         show_cols = ["review_text", "rating", "sentiment_label", "sentiment_score", "date"]
         show_cols = [c for c in show_cols if c in df_view.columns]
         st.dataframe(
-            df_view[show_cols],
+            df_view[show_cols].style.background_gradient(
+                subset=["sentiment_score"] if "sentiment_score" in show_cols else [],
+                cmap="RdYlGn", vmin=-1, vmax=1
+            ),
             use_container_width=True,
             height=500,
-        )    
-        #st.dataframe(
-           # df_view[show_cols].style.background_gradient(
-           #     subset=["sentiment_score"] if "sentiment_score" in show_cols else [],
-           #     cmap="RdYlGn", vmin=-1, vmax=1
-          #  ),
-          #  use_container_width=True,
-         #   height=500,
-        #)
+        )
         csv = df_view.to_csv(index=False).encode()
         st.download_button("⬇️ Download Processed Data (CSV)", data=csv, file_name="processed_reviews.csv", mime="text/csv")
 
